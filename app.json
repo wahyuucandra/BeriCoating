@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "BeriCoating",
+    "slug": "bericoating",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "bericoating",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "platforms": ["android"],
+    "plugins": [
+      "expo-router",
+      "./plugins/withBluetoothClassic.js"
+    ],
+    "android": {
+      "package": "com.acc.cm8825",
+      "permissions": [
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ],
+      "minSdkVersion": 24,
+      "compileSdkVersion": 35,
+      "targetSdkVersion": 35
+    },
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
