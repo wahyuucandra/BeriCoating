@@ -1,10 +1,12 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  Animated,
+  Easing,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useBluetoothStore } from '../store/useBluetoothStore';
@@ -18,7 +20,6 @@ function formatTimestamp(ts: number): string {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    fractionalSecondDigits: 3,
   });
 }
 
@@ -26,6 +27,84 @@ export default function MeasurementScreen() {
   const router = useRouter();
   const { connectedDevice, isConnected, latestMeasurement, history, clearHistory } = useBluetoothStore();
   const { disconnectDevice, isReconnecting, reconnectAttempts } = useBluetooth();
+
+  // Animated values
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const valueScale = useRef(new Animated.Value(1)).current;
+  const cardGlow = useRef(new Animated.Value(0)).current;
+  const prevValueRef = useRef<number | null>(null);
+
+  // Pulsing green dot for connected status
+  useEffect(() => {
+    if (isConnected) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 0.3,
+            duration: 900,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 900,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [isConnected]);
+
+  // Animate measurement value on new data
+  useEffect(() => {
+    if (!latestMeasurement) return;
+
+    // Scale bounce animation on new value
+    if (prevValueRef.current !== null && prevValueRef.current !== latestMeasurement.value) {
+      // Reset
+      valueScale.setValue(1);
+      cardGlow.setValue(0);
+
+      Animated.parallel([
+        Animated.sequence([
+          Animated.spring(valueScale, {
+            toValue: 1.12,
+            speed: 20,
+            bounciness: 12,
+            useNativeDriver: true,
+          }),
+          Animated.spring(valueScale, {
+            toValue: 1,
+            speed: 8,
+            bounciness: 6,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(cardGlow, {
+            toValue: 1,
+            duration: 150,
+            useNativeDriver: true,
+          }),
+          Animated.timing(cardGlow, {
+            toValue: 0,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]).start();
+    }
+
+    prevValueRef.current = latestMeasurement.value;
+  }, [latestMeasurement?.timestamp]);
+
+  const glowOpacity = cardGlow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 0.15],
+  });
 
   const handleDisconnect = useCallback(() => {
     disconnectDevice();
@@ -37,24 +116,43 @@ export default function MeasurementScreen() {
   }, [clearHistory]);
 
   const formatValue = (value: number, substrate: string | null): string => {
-    // NFe: integer, Fe: 1 decimal
     return substrate === 'NFe' ? value.toString() : value.toFixed(1);
   };
 
-  const renderHistoryItem = ({ item }: { item: MeasurementWithTimestamp }) => (
-    <View style={styles.historyItem}>
-      <View style={styles.historyValue}>
-        <Text style={styles.historyValueText}>
-          {formatValue(item.value, item.substrate)}
-        </Text>
-        <Text style={styles.historyUnitText}>
-          {item.unit === 'um' ? 'µm' : item.unit === 'mil' ? 'mil' : '---'}
-        </Text>
+  const renderHistoryItem = ({ item, index }: { item: MeasurementWithTimestamp; index: number }) => (
+    <View
+      style={[
+        styles.historyItem,
+        index === 0 && styles.historyItemLatest,
+      ]}
+    >
+      <View style={styles.historyLeft}>
+        <View style={styles.historyIndex}>
+          <Text style={styles.historyIndexText}>{history.length - index}</Text>
+        </View>
+        <View style={styles.historyValueWrap}>
+          <Text style={styles.historyValueText}>
+            {formatValue(item.value, item.substrate)}
+          </Text>
+          <Text style={styles.historyUnit}>
+            {item.unit === 'um' ? 'µm' : item.unit === 'mil' ? 'mil' : '---'}
+          </Text>
+        </View>
       </View>
-      <View style={styles.historyMeta}>
-        <Text style={styles.historySubstrate}>
-          {item.substrate ?? '---'}
-        </Text>
+      <View style={styles.historyRight}>
+        <View style={[
+          styles.substrateBadge,
+          item.substrate === 'Fe' && styles.substrateFe,
+          item.substrate === 'NFe' && styles.substrateNFe,
+        ]}>
+          <Text style={[
+            styles.substrateBadgeText,
+            item.substrate === 'Fe' && styles.substrateFeText,
+            item.substrate === 'NFe' && styles.substrateNFeText,
+          ]}>
+            {item.substrate ?? '---'}
+          </Text>
+        </View>
         <Text style={styles.historyTimestamp}>
           {formatTimestamp(item.timestamp)}
         </Text>
@@ -64,6 +162,7 @@ export default function MeasurementScreen() {
 
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
+      <Text style={styles.emptyIcon}>📡</Text>
       <Text style={styles.emptyText}>Waiting for measurements...</Text>
       <Text style={styles.emptySubtext}>
         Place the probe on a surface to receive data.
@@ -75,78 +174,107 @@ export default function MeasurementScreen() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>CM-8825FN</Text>
-        <Text style={styles.headerSubtitle}>Coating Thickness Gauge</Text>
+        <View style={styles.headerTop}>
+          <View>
+            <Text style={styles.headerTitle}>BeriCoat</Text>
+            <Text style={styles.headerSubtitle}>Coating Thickness Gauge</Text>
+          </View>
+        </View>
       </View>
 
       {/* Connection Status */}
       <View style={styles.statusBar}>
-        <View style={styles.statusRow}>
-          <View style={[styles.statusDot, isConnected ? styles.statusConnected : styles.statusDisconnected]} />
-          <Text style={styles.statusText}>
-            {isConnected ? 'Connected' : 'Disconnected'}
-          </Text>
-          {isReconnecting && (
-            <Text style={styles.reconnectingText}>
-              Reconnecting ({reconnectAttempts}/10)...
+        <View style={styles.statusLeft}>
+          <View style={styles.statusDotWrap}>
+            <View style={[styles.statusDot, isConnected ? styles.dotConnected : styles.dotDisconnected]} />
+            {isConnected && (
+              <Animated.View
+                style={[styles.statusDotPulse, styles.dotConnected, { opacity: pulseAnim }]}
+              />
+            )}
+          </View>
+          <View>
+            <Text style={styles.statusText}>
+              {isConnected ? 'Connected' : 'Disconnected'}
             </Text>
-          )}
+            {isReconnecting && (
+              <Text style={styles.reconnectingText}>
+                Reconnecting ({reconnectAttempts}/10)...
+              </Text>
+            )}
+          </View>
         </View>
-        <TouchableOpacity style={styles.disconnectButton} onPress={handleDisconnect}>
-          <Text style={styles.disconnectButtonText}>Disconnect</Text>
+        <TouchableOpacity style={styles.disconnectBtn} onPress={handleDisconnect}>
+          <Text style={styles.disconnectBtnText}>Disconnect</Text>
         </TouchableOpacity>
       </View>
 
       {/* Device Info */}
       {connectedDevice && (
-        <View style={styles.deviceInfo}>
-          <Text style={styles.deviceName}>{connectedDevice.name}</Text>
-          <Text style={styles.deviceAddress}>{connectedDevice.address}</Text>
+        <View style={styles.deviceBar}>
+          <Text style={styles.deviceIcon}>📟</Text>
+          <View>
+            <Text style={styles.deviceName}>{connectedDevice.name}</Text>
+            <Text style={styles.deviceAddress}>{connectedDevice.address}</Text>
+          </View>
         </View>
       )}
 
-      {/* Latest Measurement */}
-      <View style={styles.measurementCard}>
-        <Text style={styles.measurementLabel}>THICKNESS</Text>
-        <View style={styles.measurementValueContainer}>
-          <Text style={styles.measurementValue}>
-            {latestMeasurement ? formatValue(latestMeasurement.value, latestMeasurement.substrate) : '---'}
-          </Text>
-          <Text style={styles.measurementUnit}>
-            {latestMeasurement?.unit === 'um' ? 'µm' : latestMeasurement?.unit === 'mil' ? 'mil' : '---'}
-          </Text>
-        </View>
-        {latestMeasurement && (
-          <>
-            <View style={styles.measurementDivider} />
-            <View style={styles.measurementDetails}>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Substrate</Text>
-                <Text style={styles.detailValue}>
-                  {latestMeasurement.substrate ?? 'Auto'}
-                </Text>
+      {/* Measurement Card */}
+      <View style={styles.cardWrapper}>
+        <Animated.View
+          style={[
+            styles.cardGlow,
+            { opacity: glowOpacity },
+          ]}
+        />
+        <Animated.View
+          style={[
+            styles.measurementCard,
+            { transform: [{ scale: valueScale }] },
+          ]}
+        >
+          <Text style={styles.cardLabel}>THICKNESS</Text>
+          <View style={styles.valueRow}>
+            <Text style={styles.valueText}>
+              {latestMeasurement ? formatValue(latestMeasurement.value, latestMeasurement.substrate) : '---'}
+            </Text>
+            <Text style={styles.unitText}>
+              {latestMeasurement?.unit === 'um' ? 'µm' : latestMeasurement?.unit === 'mil' ? 'mil' : '---'}
+            </Text>
+          </View>
+          {latestMeasurement && (
+            <>
+              <View style={styles.divider} />
+              <View style={styles.detailRow}>
+                <View style={styles.detailChip}>
+                  <Text style={styles.detailChipLabel}>Substrate</Text>
+                  <Text style={styles.detailChipValue}>
+                    {latestMeasurement.substrate ?? 'Auto'}
+                  </Text>
+                </View>
+                <View style={styles.detailChip}>
+                  <Text style={styles.detailChipLabel}>Time</Text>
+                  <Text style={styles.detailChipValue}>
+                    {formatTimestamp(latestMeasurement.timestamp)}
+                  </Text>
+                </View>
               </View>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Timestamp</Text>
-                <Text style={styles.detailValue}>
-                  {formatTimestamp(latestMeasurement.timestamp)}
-                </Text>
-              </View>
-            </View>
-          </>
-        )}
+            </>
+          )}
+        </Animated.View>
       </View>
 
       {/* History */}
-      <View style={styles.historySection}>
-        <View style={styles.historyHeader}>
-          <Text style={styles.historyTitle}>
-            History ({history.length})
-          </Text>
-          <TouchableOpacity style={styles.clearButton} onPress={handleClearHistory}>
-            <Text style={styles.clearButtonText}>Clear</Text>
+      <View style={styles.historyHeader}>
+        <Text style={styles.historyTitle}>
+          History ({history.length})
+        </Text>
+        {history.length > 0 && (
+          <TouchableOpacity style={styles.clearBtn} onPress={handleClearHistory}>
+            <Text style={styles.clearBtnText}>Clear</Text>
           </TouchableOpacity>
-        </View>
+        )}
       </View>
 
       <FlatList
@@ -155,6 +283,7 @@ export default function MeasurementScreen() {
         renderItem={renderHistoryItem}
         ListEmptyComponent={renderEmpty}
         contentContainerStyle={history.length === 0 ? styles.emptyList : styles.historyList}
+        showsVerticalScrollIndicator={false}
       />
     </View>
   );
@@ -163,23 +292,29 @@ export default function MeasurementScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#F0F4F8',
   },
   header: {
-    backgroundColor: '#1976D2',
-    paddingTop: 60,
-    paddingBottom: 24,
+    backgroundColor: '#1565C0',
+    paddingTop: 54,
+    paddingBottom: 22,
     paddingHorizontal: 20,
   },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 26,
+    fontWeight: '800',
     color: '#FFFFFF',
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: '#BBDEFB',
+    fontSize: 13,
+    color: '#90CAF9',
     marginTop: 4,
+    fontWeight: '500',
   },
   statusBar: {
     flexDirection: 'row',
@@ -189,130 +324,163 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
+    borderBottomColor: '#E8EDF2',
   },
-  statusRow: {
+  statusLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+  },
+  statusDotWrap: {
+    width: 18,
+    height: 18,
+    marginRight: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   statusDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-    marginRight: 8,
+    position: 'absolute',
   },
-  statusConnected: {
+  statusDotPulse: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    position: 'absolute',
+  },
+  dotConnected: {
     backgroundColor: '#4CAF50',
   },
-  statusDisconnected: {
-    backgroundColor: '#F44336',
+  dotDisconnected: {
+    backgroundColor: '#EF5350',
   },
   statusText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#424242',
-    flex: 1,
+    fontWeight: '700',
+    color: '#263238',
   },
   reconnectingText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#FF9800',
     fontWeight: '600',
+    marginTop: 2,
   },
-  deviceInfo: {
+  deviceBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#FAFAFA',
+    paddingVertical: 10,
+    backgroundColor: '#FAFCFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
+    borderBottomColor: '#E8EDF2',
+  },
+  deviceIcon: {
+    fontSize: 20,
+    marginRight: 10,
   },
   deviceName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#212121',
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#37474F',
   },
   deviceAddress: {
-    fontSize: 12,
-    color: '#757575',
-    marginTop: 2,
+    fontSize: 11,
+    color: '#90A4AE',
+    fontFamily: 'monospace',
+    marginTop: 1,
+  },
+  cardWrapper: {
+    margin: 16,
+    borderRadius: 20,
+  },
+  cardGlow: {
+    position: 'absolute',
+    top: -4,
+    left: -4,
+    right: -4,
+    bottom: -4,
+    borderRadius: 24,
+    backgroundColor: '#1565C0',
   },
   measurementCard: {
     backgroundColor: '#FFFFFF',
-    margin: 16,
-    borderRadius: 16,
-    padding: 24,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
+    borderRadius: 20,
+    padding: 28,
+    elevation: 6,
+    shadowColor: '#1565C0',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E3EDF5',
   },
-  measurementLabel: {
+  cardLabel: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#9E9E9E',
-    letterSpacing: 1.5,
+    fontWeight: '800',
+    color: '#90A4AE',
+    letterSpacing: 2,
     textAlign: 'center',
   },
-  measurementValueContainer: {
+  valueRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'baseline',
-    marginTop: 8,
+    marginTop: 12,
   },
-  measurementValue: {
-    fontSize: 64,
-    fontWeight: '300',
-    color: '#212121',
+  valueText: {
+    fontSize: 72,
+    fontWeight: '200',
+    color: '#1565C0',
+    letterSpacing: -2,
   },
-  measurementUnit: {
-    fontSize: 24,
-    fontWeight: '500',
-    color: '#757575',
+  unitText: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#64B5F6',
     marginLeft: 8,
   },
-  measurementDivider: {
+  divider: {
     height: 1,
-    backgroundColor: '#E0E0E0',
-    marginVertical: 16,
+    backgroundColor: '#ECEFF1',
+    marginVertical: 18,
   },
-  measurementDetails: {
+  detailRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'space-evenly',
   },
-  detailItem: {
+  detailChip: {
     alignItems: 'center',
   },
-  detailLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#9E9E9E',
+  detailChipLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#B0BEC5',
+    letterSpacing: 1,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
-  detailValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#424242',
+  detailChipValue: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#455A64',
     marginTop: 4,
-  },
-  historySection: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
   },
   historyHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
   },
   historyTitle: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#424242',
+    fontWeight: '800',
+    color: '#37474F',
   },
   historyList: {
     paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingBottom: 20,
   },
   emptyList: {
     flex: 1,
@@ -321,81 +489,135 @@ const styles = StyleSheet.create({
   },
   historyItem: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 10,
-    padding: 14,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     marginBottom: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    elevation: 1,
+    justifyContent: 'space-between',
+    elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    borderWidth: 1,
+    borderColor: '#ECEFF1',
   },
-  historyValue: {
+  historyItemLatest: {
+    borderColor: '#BBDEFB',
+    backgroundColor: '#F5F9FF',
+  },
+  historyLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  historyIndex: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: '#ECEFF1',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  historyIndexText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#78909C',
+  },
+  historyValueWrap: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    minWidth: 100,
   },
   historyValueText: {
     fontSize: 22,
-    fontWeight: '600',
-    color: '#212121',
+    fontWeight: '700',
+    color: '#263238',
   },
-  historyUnitText: {
-    fontSize: 12,
-    color: '#757575',
+  historyUnit: {
+    fontSize: 11,
+    color: '#90A4AE',
     marginLeft: 4,
+    fontWeight: '600',
   },
-  historyMeta: {
-    flex: 1,
+  historyRight: {
     alignItems: 'flex-end',
   },
-  historySubstrate: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#616161',
+  substrateBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 8,
+    backgroundColor: '#ECEFF1',
+    marginBottom: 4,
+  },
+  substrateFe: {
+    backgroundColor: '#E8F5E9',
+  },
+  substrateNFe: {
+    backgroundColor: '#FFF3E0',
+  },
+  substrateBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#78909C',
+  },
+  substrateFeText: {
+    color: '#2E7D32',
+  },
+  substrateNFeText: {
+    color: '#E65100',
   },
   historyTimestamp: {
     fontSize: 11,
-    color: '#9E9E9E',
-    marginTop: 2,
+    color: '#B0BEC5',
+    fontWeight: '500',
   },
   emptyContainer: {
     alignItems: 'center',
-    padding: 32,
+    padding: 40,
+  },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: 14,
   },
   emptyText: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#757575',
+    fontWeight: '700',
+    color: '#78909C',
   },
   emptySubtext: {
     fontSize: 13,
-    color: '#9E9E9E',
+    color: '#B0BEC5',
     textAlign: 'center',
     marginTop: 8,
+    lineHeight: 19,
   },
-  disconnectButton: {
-    backgroundColor: '#F44336',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 6,
+  disconnectBtn: {
+    backgroundColor: '#EF5350',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    elevation: 2,
+    shadowColor: '#EF5350',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
   },
-  disconnectButtonText: {
+  disconnectBtnText: {
     color: '#FFFFFF',
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '800',
   },
-  clearButton: {
-    backgroundColor: '#E0E0E0',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 6,
+  clearBtn: {
+    backgroundColor: '#ECEFF1',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
-  clearButtonText: {
-    color: '#616161',
+  clearBtnText: {
+    color: '#607D8B',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
 });

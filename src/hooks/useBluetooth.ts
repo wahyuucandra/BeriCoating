@@ -2,7 +2,8 @@ import { useEffect, useRef, useCallback } from 'react';
 import { bluetoothService } from '../services/BluetoothClassic';
 import type { BluetoothEvent } from '../services/BluetoothClassic';
 import { useBluetoothStore } from '../store/useBluetoothStore';
-import { parseMeasurement, type MeasurementWithTimestamp } from '../utils/parser';
+import { parseMeasurement } from '../utils/parser';
+import type { MeasurementWithTimestamp } from '../types/measurement';
 import { logger } from '../utils/logger';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -64,6 +65,14 @@ export function useBluetooth() {
       switch (event.type) {
         case 'onConnected': {
           logger.info(`Device connected: ${event.payload.name ?? event.payload.address}`);
+
+          // Reject auto-reconnect if user manually disconnected
+          if (useBluetoothStore.getState().disconnectRequested) {
+            logger.info('Rejecting auto-reconnect — user manually disconnected, disconnecting...');
+            bluetoothService.disconnect();
+            break;
+          }
+
           const device = useBluetoothStore.getState().devices.find(
             (d) => d.address === event.payload.address
           ) ?? {
@@ -80,6 +89,10 @@ export function useBluetooth() {
         case 'onDisconnected': {
           logger.info(`Device disconnected: ${event.payload.name ?? event.payload.address}`);
           setDisconnected();
+
+          if (useBluetoothStore.getState().disconnectRequested) {
+            break;
+          }
 
           const address = event.payload.address || lastAddressRef.current;
           if (address) {
@@ -130,6 +143,7 @@ export function useBluetooth() {
 
   const connectToDevice = useCallback(
     async (address: string) => {
+      useBluetoothStore.setState({ disconnectRequested: false });
       lastAddressRef.current = address;
       await connect(address);
     },
@@ -137,6 +151,7 @@ export function useBluetooth() {
   );
 
   const disconnectDevice = useCallback(() => {
+    useBluetoothStore.setState({ disconnectRequested: true });
     clearReconnectTimer();
     lastAddressRef.current = null;
     disconnect();

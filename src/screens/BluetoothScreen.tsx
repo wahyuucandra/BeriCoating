@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,9 +10,16 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useBluetoothStore } from '../store/useBluetoothStore';
+import { useSnackbarStore } from '../store/useSnackbarStore';
 import { useBluetooth } from '../hooks/useBluetooth';
 import { bluetoothService } from '../services/BluetoothClassic';
 import type { BluetoothDevice } from '../services/BluetoothClassic';
+import { TabBar } from '../components/TabBar';
+import { ConnectingModal } from '../components/ConnectingModal';
+
+/** Device yang mengandung "CM" di nama — kemungkinan CM-8825FN gauge. */
+const isCMDevice = (d: BluetoothDevice) =>
+  d.name.toUpperCase().includes('CM');
 
 export default function BluetoothScreen() {
   const router = useRouter();
@@ -28,6 +35,24 @@ export default function BluetoothScreen() {
   } = useBluetoothStore();
   const { connectToDevice } = useBluetooth();
   const scan = useBluetoothStore((s) => s.scan);
+  const connectionError = useBluetoothStore((s) => s.connectionError);
+  const isConnecting = useBluetoothStore((s) => s.isConnecting);
+  const connectingAddress = useBluetoothStore((s) => s.connectingAddress);
+  const showSnackbar = useSnackbarStore((s) => s.show);
+
+  const [activeTab, setActiveTab] = useState<'all' | 'cm'>('cm');
+
+  // CM devices first, then the rest — all devices shown
+  const sortedDevices = useMemo(() => {
+    const cm = devices.filter(isCMDevice);
+    const others = devices.filter((d) => !isCMDevice(d));
+    const all = [...cm, ...others];
+
+    if (activeTab === 'cm') {
+      return all.filter(isCMDevice);
+    }
+    return all;
+  }, [devices, activeTab]);
 
   useEffect(() => {
     requestPermissions().then(() => {
@@ -42,6 +67,19 @@ export default function BluetoothScreen() {
       router.replace('/measurement');
     }
   }, [isConnected, router]);
+
+  // Show snackbar when errors occur
+  useEffect(() => {
+    if (scanError) {
+      showSnackbar(scanError, 'error');
+    }
+  }, [scanError, showSnackbar]);
+
+  useEffect(() => {
+    if (connectionError) {
+      showSnackbar(connectionError, 'error');
+    }
+  }, [connectionError, showSnackbar]);
 
   const handleEnableBluetooth = useCallback(() => {
     enableBluetooth();
@@ -78,34 +116,80 @@ export default function BluetoothScreen() {
     </View>
   );
 
-  const renderDevice = ({ item }: { item: BluetoothDevice }) => (
-    <TouchableOpacity
-      style={styles.deviceItem}
-      onPress={() => handleConnect(item)}
-      activeOpacity={0.7}
-    >
-      <View style={styles.deviceInfo}>
-        <Text style={styles.deviceName}>{item.name}</Text>
-        <Text style={styles.deviceAddress}>{item.address}</Text>
-      </View>
-      <View style={styles.connectButton}>
-        <Text style={styles.connectButtonText}>Connect</Text>
-      </View>
-    </TouchableOpacity>
-  );
+  const renderDevice = ({ item }: { item: BluetoothDevice }) => {
+    const isCM = isCMDevice(item);
+    return (
+      <TouchableOpacity
+        style={[styles.deviceItem, isCM && styles.deviceItemCM]}
+        onPress={() => handleConnect(item)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.deviceInfo}>
+          <View style={styles.deviceNameRow}>
+            <Text style={styles.deviceName}>{item.name}</Text>
+            {isCM && (
+              <View style={styles.cmBadge}>
+                <Text style={styles.cmBadgeText}>CM</Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.deviceAddress}>{item.address}</Text>
+        </View>
+        <View style={[styles.connectButton, isCM && styles.connectButtonCM]}>
+          <Text style={styles.connectButtonText}>Connect</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
       {isScanning ? (
-        <ActivityIndicator size="large" color="#2196F3" />
+        <>
+          <ActivityIndicator size="large" color="#1976D2" />
+          <Text style={styles.emptyTitle}>Scanning...</Text>
+          <Text style={styles.emptySubtitle}>
+            Looking for nearby Bluetooth devices
+          </Text>
+        </>
       ) : (
         <>
+          <Text style={styles.emptyIcon}>📡</Text>
           <Text style={styles.emptyTitle}>No Devices Found</Text>
           <Text style={styles.emptySubtitle}>
-            Make sure your device is paired in Android Bluetooth settings.
+            Pastikan alat CM-8825FN sudah di-pair di{'\n'}
+            pengaturan Bluetooth Android terlebih dahulu.
           </Text>
+          <View style={styles.emptySteps}>
+            <View style={styles.emptyStep}>
+              <Text style={styles.emptyStepNumber}>1</Text>
+              <Text style={styles.emptyStepText}>
+                Buka <Text style={styles.emptyStepBold}>Settings → Bluetooth</Text> di Android
+              </Text>
+            </View>
+            <View style={styles.emptyStep}>
+              <Text style={styles.emptyStepNumber}>2</Text>
+              <Text style={styles.emptyStepText}>
+                Nyalakan alat <Text style={styles.emptyStepBold}>CM-8825FN</Text>
+              </Text>
+            </View>
+            <View style={styles.emptyStep}>
+              <Text style={styles.emptyStepNumber}>3</Text>
+              <Text style={styles.emptyStepText}>
+                Tap <Text style={styles.emptyStepBold}>Pair new device</Text> lalu pilih CM-8825FN
+              </Text>
+            </View>
+            <View style={styles.emptyStep}>
+              <Text style={styles.emptyStepNumber}>4</Text>
+              <Text style={styles.emptyStepText}>
+                Kembali ke aplikasi dan tap <Text style={styles.emptyStepBold}>Scan</Text>
+              </Text>
+            </View>
+          </View>
           {scanError && (
-            <Text style={styles.errorText}>{scanError}</Text>
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{scanError}</Text>
+            </View>
           )}
         </>
       )}
@@ -114,6 +198,11 @@ export default function BluetoothScreen() {
 
   return (
     <View style={styles.container}>
+      <ConnectingModal
+        visible={isConnecting}
+        deviceAddress={connectingAddress ?? ''}
+      />
+
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Bluetooth Devices</Text>
         <Text style={styles.headerSubtitle}>CM-8825FN Coating Thickness Gauge</Text>
@@ -123,12 +212,14 @@ export default function BluetoothScreen() {
         renderBluetoothDisabled()
       ) : (
         <>
+          <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
+
           <FlatList
-            data={devices}
+            data={sortedDevices}
             keyExtractor={(item) => item.address}
             renderItem={renderDevice}
             ListEmptyComponent={renderEmpty}
-            contentContainerStyle={devices.length === 0 ? styles.emptyList : styles.list}
+            contentContainerStyle={sortedDevices.length === 0 ? styles.emptyList : styles.list}
             refreshControl={
               <RefreshControl refreshing={isScanning} onRefresh={scan} />
             }
@@ -198,6 +289,29 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#212121',
   },
+  deviceNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  cmBadge: {
+    backgroundColor: '#E3F2FD',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  cmBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1976D2',
+  },
+  deviceItemCM: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#1976D2',
+  },
+  connectButtonCM: {
+    backgroundColor: '#1976D2',
+  },
   deviceAddress: {
     fontSize: 12,
     color: '#757575',
@@ -216,26 +330,69 @@ const styles = StyleSheet.create({
   },
   emptyContainer: {
     alignItems: 'center',
-    padding: 32,
+    padding: 24,
+  },
+  emptyIcon: {
+    fontSize: 56,
+    marginBottom: 16,
   },
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#757575',
-    marginTop: 16,
+    color: '#424242',
   },
   emptySubtitle: {
     fontSize: 14,
-    color: '#9E9E9E',
+    color: '#757575',
     textAlign: 'center',
     marginTop: 8,
     lineHeight: 20,
   },
-  errorText: {
-    fontSize: 14,
-    color: '#F44336',
+  emptySteps: {
+    marginTop: 24,
+    alignSelf: 'stretch',
+    paddingHorizontal: 16,
+  },
+  emptyStep: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 14,
+  },
+  emptyStepNumber: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#1976D2',
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
     textAlign: 'center',
-    marginTop: 16,
+    lineHeight: 26,
+    overflow: 'hidden',
+    marginRight: 12,
+    marginTop: -1,
+  },
+  emptyStepText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#616161',
+    lineHeight: 22,
+  },
+  emptyStepBold: {
+    fontWeight: '700',
+    color: '#424242',
+  },
+  errorBox: {
+    marginTop: 20,
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  errorText: {
+    fontSize: 13,
+    color: '#C62828',
+    textAlign: 'center',
   },
   scanButton: {
     backgroundColor: '#1976D2',

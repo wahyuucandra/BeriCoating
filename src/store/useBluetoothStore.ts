@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import type { BluetoothDevice } from '../services/BluetoothClassic';
 import { bluetoothService } from '../services/BluetoothClassic';
-import { parseMeasurement, type MeasurementWithTimestamp } from '../utils/parser';
+import { parseMeasurement } from '../utils/parser';
+import type { MeasurementWithTimestamp } from '../types/measurement';
 import { logger } from '../utils/logger';
 
 interface BluetoothState {
@@ -16,6 +17,8 @@ interface BluetoothState {
   // Connection
   connectedDevice: BluetoothDevice | null;
   isConnected: boolean;
+  isConnecting: boolean;
+  connectingAddress: string | null;
   connectionError: string | null;
 
   // Data
@@ -25,6 +28,7 @@ interface BluetoothState {
   // Auto reconnect
   reconnectAttempts: number;
   isReconnecting: boolean;
+  disconnectRequested: boolean;
 
   // Actions
   scan: () => Promise<void>;
@@ -50,6 +54,8 @@ export const useBluetoothStore = create<BluetoothState>((set, get) => ({
 
   connectedDevice: null,
   isConnected: false,
+  isConnecting: false,
+  connectingAddress: null,
   connectionError: null,
 
   latestMeasurement: null,
@@ -57,6 +63,7 @@ export const useBluetoothStore = create<BluetoothState>((set, get) => ({
 
   reconnectAttempts: 0,
   isReconnecting: false,
+  disconnectRequested: false,
 
   enableBluetooth: () => {
     bluetoothService.requestEnable();
@@ -100,7 +107,7 @@ export const useBluetoothStore = create<BluetoothState>((set, get) => ({
   },
 
   connect: async (address: string) => {
-    set({ connectionError: null, isReconnecting: false });
+    set({ connectionError: null, isReconnecting: false, isConnecting: true, connectingAddress: address });
     try {
       logger.info(`Connecting to ${address}...`);
       await bluetoothService.connect(address);
@@ -110,19 +117,19 @@ export const useBluetoothStore = create<BluetoothState>((set, get) => ({
         address,
         bonded: false,
       };
-      set({ connectedDevice: device, isConnected: true, connectionError: null, reconnectAttempts: 0 });
+      set({ connectedDevice: device, isConnected: true, isConnecting: false, connectionError: null, reconnectAttempts: 0 });
       logger.info(`Connected to ${device.name} (${address})`);
     } catch (error: any) {
       const message = error?.message ?? 'Connection failed';
       logger.error('Connection failed:', message);
-      set({ connectionError: message, isConnected: false });
+      set({ connectionError: message, isConnected: false, isConnecting: false });
     }
   },
 
   disconnect: () => {
     logger.info('Disconnecting...');
     bluetoothService.disconnect();
-    set({ connectedDevice: null, isConnected: false, isReconnecting: false, reconnectAttempts: 0 });
+    set({ connectedDevice: null, isConnected: false, isConnecting: false, connectingAddress: null, isReconnecting: false, reconnectAttempts: 0 });
   },
 
   clearHistory: () => {
@@ -130,11 +137,11 @@ export const useBluetoothStore = create<BluetoothState>((set, get) => ({
   },
 
   setConnected: (device) => {
-    set({ connectedDevice: device, isConnected: true, connectionError: null });
+    set({ connectedDevice: device, isConnected: true, isConnecting: false, connectingAddress: null, connectionError: null });
   },
 
   setDisconnected: () => {
-    set({ connectedDevice: null, isConnected: false });
+    set({ connectedDevice: null, isConnected: false, isConnecting: false, connectingAddress: null });
   },
 
   addMeasurement: (measurement) => {

@@ -1,19 +1,32 @@
 {
   "expo": {
-    "name": "BeriCoating",
-    "slug": "bericoating",
+    "name": "BeriCoat",
+    "slug": "bericoat",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "bericoating",
-    "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "scheme": "bericoat",
+    "icon": "./assets/logo.png",
     "platforms": ["android"],
     "plugins": [
       "expo-router",
-      "./plugins/withBluetoothClassic.js"
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/logo-splash.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      "./plugins/withBluetoothClassic.js",
+      "./plugins/withAdaptiveIconPadding.js",
+      "./plugins/withAndroidOptimization.js"
     ],
     "android": {
-      "package": "com.acc.cm8825",
+      "package": "com.acc.bericoat",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/logo.png",
+        "backgroundColor": "#1976D2"
+      },
       "permissions": [
         "BLUETOOTH",
         "BLUETOOTH_ADMIN",
@@ -21,10 +34,7 @@
         "BLUETOOTH_CONNECT",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION"
-      ],
-      "minSdkVersion": 24,
-      "compileSdkVersion": 35,
-      "targetSdkVersion": 35
+      ]
     },
     "experiments": {
       "typedRoutes": true
